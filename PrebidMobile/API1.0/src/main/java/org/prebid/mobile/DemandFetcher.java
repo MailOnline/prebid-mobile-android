@@ -16,6 +16,7 @@
 
 package org.prebid.mobile;
 
+import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -26,6 +27,8 @@ import java.util.HashMap;
 import java.util.UUID;
 
 class DemandFetcher {
+
+    private final HandlerThread fetcherThread;
 
     enum STATE {
         STOPPED,
@@ -47,7 +50,7 @@ class DemandFetcher {
         this.state = STATE.STOPPED;
         this.periodMillis = 0;
         this.adObject = adObj;
-        HandlerThread fetcherThread = new HandlerThread("FetcherThread");
+        fetcherThread = new HandlerThread("FetcherThread");
         fetcherThread.start();
         this.fetcherHandler = new Handler(fetcherThread.getLooper());
         this.requestRunnable = new RequestRunnable();
@@ -118,6 +121,7 @@ class DemandFetcher {
             this.requestRunnable.cancelRequest();
             this.fetcherHandler.removeCallbacks(requestRunnable);
             this.requestRunnable = null;
+            cleanThread(fetcherThread);
             state = STATE.DESTROYED;
         }
     }
@@ -142,6 +146,7 @@ class DemandFetcher {
     }
 
     class RequestRunnable implements Runnable {
+        private final HandlerThread demandThread;
         private DemandAdapter demandAdapter;
         private boolean finished = false;
         private String auctionId;
@@ -149,7 +154,7 @@ class DemandFetcher {
 
         RequestRunnable() {
             // Using a separate thread for making demand request so that waiting on currently thread doesn't block actual fetching
-            HandlerThread demandThread = new HandlerThread("DemandThread");
+            demandThread = new HandlerThread("DemandThread");
             demandThread.start();
             this.demandHandler = new Handler(demandThread.getLooper());
             this.demandAdapter = new PrebidServerAdapter();
@@ -179,6 +184,7 @@ class DemandFetcher {
                                 Util.apply(demand, DemandFetcher.this.adObject);
                                 LogUtil.i("Successfully set the following keywords: " + demand.toString());
                                 notifyListener(ResultCode.SUCCESS);
+                                cleanThread(demandThread);
                                 finished = true;
                             }
                         }
@@ -189,6 +195,7 @@ class DemandFetcher {
                                 Util.apply(null, DemandFetcher.this.adObject);
                                 LogUtil.i("Removed all used keywords from the ad object");
                                 notifyListener(resultCode);
+                                cleanThread(demandThread);
                                 finished = true;
                             }
                         }
@@ -201,6 +208,7 @@ class DemandFetcher {
             while (!finished && !testMode) {
                 long currentTime = System.currentTimeMillis();
                 if (currentTime - lastFetchTime >= PrebidMobile.timeoutMillis) {
+                    cleanThread(demandThread);
                     finished = true;
                     notifyListener(ResultCode.TIMEOUT);
                 }
@@ -209,7 +217,18 @@ class DemandFetcher {
                 }
             }
         }
+
+
     }
+
+    private static void cleanThread(HandlerThread thread) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+            thread.quitSafely();
+        } else {
+            thread.quit();
+        }
+    }
+
 
     //region exposed for testing
     @VisibleForTesting

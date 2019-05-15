@@ -34,6 +34,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -69,7 +70,8 @@ class PrebidServerAdapter implements DemandAdapter {
     @Override
     public void stopRequest(String auctionId) {
         ArrayList<ServerConnector> toRemove = new ArrayList<>();
-        for (ServerConnector connector : serverConnectors) {
+        for (Iterator<ServerConnector> iterator = serverConnectors.iterator(); iterator.hasNext(); ) {
+            ServerConnector connector = iterator.next();
             if (connector.getAuctionId().equals(auctionId)) {
                 connector.destroy();
                 toRemove.add(connector);
@@ -87,6 +89,32 @@ class PrebidServerAdapter implements DemandAdapter {
             this.listener = listener;
             this.requestParams = requestParams;
             this.auctionId = auctionId;
+        }
+
+        private void closeSilently(Closeable closable) {
+            if (closable != null) {
+                try {
+                    closable.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
+        private String readInputStream(InputStream is) throws IOException {
+            StringBuilder builder = new StringBuilder();
+            BufferedReader reader = null;
+            try {
+                reader = new BufferedReader(new InputStreamReader(is, "utf-8"));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    builder.append(line);
+                }
+            } finally {
+                closeSilently(reader);
+                closeSilently(is);
+            }
+            return builder.toString();
         }
 
         @Override
@@ -113,6 +141,7 @@ class PrebidServerAdapter implements DemandAdapter {
                 LogUtil.d("Sending request for auction " + auctionId + " with post data: " + postData.toString());
                 wr.write(postData.toString());
                 wr.flush();
+                closeSilently(wr);
 
                 // Start the connection
                 conn.connect();
@@ -121,16 +150,7 @@ class PrebidServerAdapter implements DemandAdapter {
                 int httpResult = conn.getResponseCode();
                 long demandFetchEndTime = System.currentTimeMillis();
                 if (httpResult == HttpURLConnection.HTTP_OK) {
-                    StringBuilder builder = new StringBuilder();
-                    InputStream is = conn.getInputStream();
-                    BufferedReader reader = new BufferedReader(new InputStreamReader(is, "utf-8"));
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        builder.append(line);
-                    }
-                    reader.close();
-                    is.close();
-                    String result = builder.toString();
+                    String result = readInputStream(conn.getInputStream());
                     JSONObject response = new JSONObject(result);
                     httpCookieSync(conn.getHeaderFields());
                     // in the future, this can be improved to parse response base on request versions
@@ -148,16 +168,7 @@ class PrebidServerAdapter implements DemandAdapter {
                     }
                     return response;
                 } else if (httpResult == HttpURLConnection.HTTP_BAD_REQUEST) {
-                    StringBuilder builder = new StringBuilder();
-                    InputStream is = conn.getErrorStream();
-                    BufferedReader reader = new BufferedReader(new InputStreamReader(is, "utf-8"));
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        builder.append(line);
-                    }
-                    reader.close();
-                    is.close();
-                    String result = builder.toString();
+                    String result = readInputStream(conn.getErrorStream());
                     LogUtil.d("Getting response for auction " + getAuctionId() + ": " + result);
                     Pattern storedRequestNotFound = Pattern.compile("^Invalid request: Stored Request with ID=\".*\" not found.");
                     Pattern storedImpNotFound = Pattern.compile("^Invalid request: Stored Imp with ID=\".*\" not found.");

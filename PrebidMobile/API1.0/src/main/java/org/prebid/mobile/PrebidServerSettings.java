@@ -84,6 +84,7 @@ class PrebidServerSettings {
                     try {
                         WebView wv = new WebView(context);
                         userAgent = wv.getSettings().getUserAgentString();
+                        wv.destroy();
                     } catch (AndroidRuntimeException e) {
                         userAgent = "unavailable";
                     }
